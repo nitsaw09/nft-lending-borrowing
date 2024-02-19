@@ -16,7 +16,7 @@ The NFTLending smart contract enables users to lend and borrow using Non-Fungibl
 3. `LoanDefaulted(uint256 tokenId, address borrower, uint256 amount)`: Emitted when a loan is defaulted.
 
 ## Functions
-1. `constructor(address nftAddress)`: Initializes the smart contract with the NFT contract address, minimum loan amount, maximum loan duration, and interest rate.
+1. `constructor(address nftAddress)`: Initializes the smart contract with the NFT contract address.
 2. `lend(uint256 tokenId, uint256 amount, uint256 duration) external`: Allows NFT owners to lend their NFT and receive loan repayments.
 3. `borrow(uint256 tokenId, uint256 amount, uint256 duration) external`: Allows users to borrow an NFT by providing a loan.
 4. `repay(uint256 tokenId) external`: Allows borrowers to repay their loans.
