@@ -4,8 +4,7 @@ import deployConfig from "../config/deploy.config";
 async function main() {
   const Contract = await ethers.getContractFactory("NFTLending");
   const contract = await Contract.deploy(
-    deployConfig.NFT_TOKEN,
-    deployConfig.LENDING_TOKEN
+    deployConfig.NFT_TOKEN_ADDRESS
   );
 
   await contract.deployed();

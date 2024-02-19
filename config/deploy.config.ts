@@ -1,4 +1,3 @@
 export default {
-    NFT_TOKEN: '',
-    LENDING_TOKEN: ''
+    NFT_TOKEN_ADDRESS: ''
 };

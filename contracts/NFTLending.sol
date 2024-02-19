@@ -2,100 +2,131 @@
 pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC721/utils/ERC721Holder.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
-contract NFTLending is Ownable, ERC721Holder {
-    using SafeMath for uint256;
+contract NFTLending is Ownable {
+    // ERC721 token contract
+    IERC721 public nft;
 
-    // ERC721 token representing NFTs
-    IERC721 public nftToken;
-
-    // ERC20 token used for handling loan transactions
-    IERC20 public lendingToken;
-
-    // Mapping to keep track of active loans for each NFT
+    // mapping to keep track of active loans for each NFT
     mapping(uint256 => Loan) public loans;
 
-    // Structure defining a loan
+    // constant for the minimum loan amount
+    uint256 public constant MIN_LOAN_AMOUNT = 1 ether;
+
+    // constant for the maximum loan duration in days
+    uint256 public constant MAX_LOAN_DURATION = 365 days;
+
+    // constant for the interest rate in percentage points
+    uint256 public constant INTEREST_RATE = 5;
+
+    // struct to represent a loan
     struct Loan {
-        uint256 amount;    // Loan amount
-        uint256 expiry;    // Loan expiry timestamp
-        address borrower;  // Borrower's address
-        bool active;       // Flag indicating whether the loan is active
+        address borrower; // The borrower's address
+        uint256 amount; // The loan amount
+        uint256 deadline; // The deadline for repayment
+        bool repaid; // A flag to indicate if the loan has been repaid
     }
 
-    // Events to log loan-related actions
-    event LoanRequested(address indexed borrower, uint256 tokenId, uint256 amount, uint256 expiry);
-    event LoanRepaid(address indexed borrower, uint256 tokenId, uint256 amount);
-    event LoanDefaulted(uint256 tokenId, address borrower, uint256 amount);
+    // Event is emitted when a loan is created
+    event LoanCreated(uint256 tokenId, uint256 amount, uint256 duration, address borrower);
 
-    // Constructor to set the addresses of ERC721 and ERC20 tokens
-    constructor(address _nftToken, address _lendingToken) {
-        nftToken = IERC721(_nftToken);
-        lendingToken = IERC20(_lendingToken);
+    // Event is emitted when an NFT is borrowed
+    event NFTBorrowed(uint256 tokenId, address borrower);
+
+    // Event is emitted when a loan is repaid
+    event LoanRepaid(uint256 tokenId, address borrower, uint256 amount);
+
+    // Event is emitted when an NFT is withdrawn from the contract
+    event NFTWithdrawn(uint256 tokenId);
+
+    // constructor to initialize the contract with the ERC721 token address
+    constructor(IERC721 _nft) {
+        nft = _nft;
     }
 
-    // Function to request a loan against an NFT
-    function requestLoan(uint256 tokenId, uint256 amount, uint256 duration) external {
-        require(!loans[tokenId].active, "NFT already used as collateral");
-        require(nftToken.ownerOf(tokenId) == msg.sender, "You are not the owner of the NFT");
-        require(nftToken.getApproved(tokenId) == address(this), "Contract address is not approved by owner");
+    // Function to enable the owner to lend an NFT with a specified amount and duration
+    function lend(uint256 tokenId, uint256 amount, uint256 duration) external onlyOwner {
+        // Check if the amount is at least the minimum loan amount
+        require(amount >= MIN_LOAN_AMOUNT, "Amount must be at least the minimum loan amount");
 
-        // Create a new loan
-        loans[tokenId] = Loan({
-            amount: amount,
-            expiry: block.timestamp.add(duration),
-            borrower: msg.sender,
-            active: true
-        });
+        // Check if the duration is less than or equal to the maximum loan duration
+        require(duration <= MAX_LOAN_DURATION, "Duration must be less than or equal to the maximum loan duration");
 
-        // Transfer loan amount from contract owner to the borrower
-        lendingToken.transferFrom(owner(), msg.sender, amount);
+        // Create a new loan with the borrower as the zero address
+        Loan storage loan = loans[tokenId];
+        loan.borrower = address(0);
+        loan.amount = amount;
+        loan.deadline = block.timestamp + duration;
+        loan.repaid = false;
 
-        // Emit LoanRequested event
-        emit LoanRequested(msg.sender, tokenId, amount, loans[tokenId].expiry);
+        // Emit an event to indicate that a loan has been created
+        emit LoanCreated(tokenId, amount, duration, address(0));
     }
 
-    // Function for borrowers to repay their loans
-    function repayLoan(uint256 tokenId) external {
-        require(loans[tokenId].borrower == msg.sender, "You are not the borrower of this loan");
-        require(loans[tokenId].active, "No loan exists for this NFT");
-        require(block.timestamp <= loans[tokenId].expiry, "Loan has expired");
+    // Function to enable a user to borrow an NFT if it's available for borrowing
+    function borrow(uint256 tokenId) external {
+        // Get the loan for the NFT
+        Loan storage loan = loans[tokenId];
 
-        // Retrieve the loan amount
-        uint256 amount = loans[tokenId].amount;
+        // Check if the NFT is available for borrowing
+        require(loan.borrower == address(0), "This NFT is not available for borrowing");
 
-        // Deactivate the loan
-        loans[tokenId].active = false;
+        // Check if the NFT is available for borrowing before the deadline
+        require(block.timestamp < loan.deadline, "This NFT is no longer available for borrowing");
 
-        // Transfer loan amount from borrower to contract owner
-        lendingToken.transfer(owner(), amount);
+        // Transfer the NFT to the borrower
+        nft.transferFrom(owner(), msg.sender, tokenId);
 
-        // Emit LoanRepaid event
-        emit LoanRepaid(msg.sender, tokenId, amount);
+        // Set the borrower for the NFT
+        loan.borrower = msg.sender;
+
+        // Emit an event to indicate that the NFT has been borrowed
+        emit NFTBorrowed(tokenId, msg.sender);
     }
 
-    // Function for the contract owner to liquidate defaulted loans
-    function liquidateDefaultedLoan(uint256 tokenId) external onlyOwner {
-        require(loans[tokenId].active && block.timestamp > loans[tokenId].expiry, "Loan not defaulted");
+       // Function to repay a loan
+    function repay(uint256 tokenId) external {
+        // Get the loan for the NFT
+        Loan storage loan = loans[tokenId];
 
-        // Retrieve loan details
-        uint256 amount = loans[tokenId].amount;
-        address borrower = loans[tokenId].borrower;
+        // Check if the borrower is repaying their own loan
+        require(loan.borrower == msg.sender, "You are not the borrower of this NFT");
 
-        // Deactivate the loan
-        loans[tokenId].active = false;
+        // Check if the loan has not been repaid yet
+        require(!loan.repaid, "You have already repaid this loan");
 
-        // Transfer NFT ownership to the contract owner (liquidator)
-        nftToken.safeTransferFrom(borrower, owner(), tokenId);
+        // Check if the loan has not expired
+        require(block.timestamp <= loan.deadline, "The loan has expired");
 
-        // Transfer collateral (loan amount) to the contract owner (liquidator)
-        lendingToken.transfer(owner(), amount);
+        // Calculate the interest amount
+        uint256 interest = (loan.amount * INTEREST_RATE) / 100 * (block.timestamp - loan.deadline);
 
-        // Emit LoanDefaulted event
-        emit LoanDefaulted(tokenId, borrower, amount);
+        // Transfer the repayment amount (principal + interest) to the owner
+        payable(owner()).transfer(loan.amount.add(interest));
+
+        // Set the loan as repaid
+        loan.repaid = true;
+
+        // Emit the LoanRepaid event
+        emit LoanRepaid(tokenId, msg.sender, loan.amount.add(interest));
+    }
+
+    // Function to withdraw an NFT from the contract
+    function withdraw(uint256 tokenId) external onlyOwner {
+        // Check if the NFT is currently borrowed
+        require(loans[tokenId].borrower == address(0), "This NFT is currently borrowed");
+
+        // Check if the loan has been repaid
+        require(loans[tokenId].repaid, "The borrower has not yet repaid the loan");
+
+        // Transfer the NFT back to the owner
+        nft.transferFrom(msg.sender, owner(), tokenId);
+
+        // Emit the NFTWithdrawn event
+        emit NFTWithdrawn(tokenId);
+
+        // Delete the loan information for the NFT
+        delete loans[tokenId];
     }
 }
